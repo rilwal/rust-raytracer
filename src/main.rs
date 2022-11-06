@@ -41,6 +41,7 @@ fn millimeters(n : f64) -> f64 {
 struct Sphere {
     center : Vec3,
     radius : f64,
+    mat : Material
 }
 
 #[derive(Debug)]
@@ -50,11 +51,17 @@ struct Ray {
 }
 
 #[derive(Copy, Clone)]
+struct Material {
+    albedo: Vec3
+}
+
+
+#[derive(Copy, Clone)]
 struct HitRecord {
     dist: f64,
     norm: Vec3,
     point: Vec3,
-    //mat: Material
+    mat: Material
 }
 
 
@@ -64,33 +71,32 @@ impl Ray {
     }
 
     fn cast(&self) -> Vec3 {
-        let sphere = Sphere {center : vec3(0.0, 0.0, 0.0), radius: 2.0};
-        let sphere2 = Sphere {center : vec3(0.0, 3.0, 0.0), radius: 1.0};
-    
-        let sphere_hit = ray_sphere_intersection(self, &sphere, 0.0, 10_000.0);
-        let sphere2_hit = ray_sphere_intersection(self, &sphere2, 0.0, 10_000.0);
+        let spheres = vec!{Sphere{center : vec3(0.0, 0.0, 0.0), radius: 2.0, mat: Material{albedo: vec3(1.0, 0.0, 0.0)}}, Sphere{center : vec3(0.0, 3.0, 0.0), radius: 1.0, mat: Material{albedo: vec3(0.2, 0.3, 0.8)}}};
 
-        if let Some(hit) = sphere_hit {
-            if let Some(hit2) = sphere2_hit {
-                return match hit.dist < hit2.dist {
-                    true => vec3(1.0, 0.0, 0.0),
-                    false => vec3(0.0, 1.0, 0.0)
+        let mut closest_hit = None;
+        
+        for sphere in spheres.iter() {
+            if let Some(hit) = ray_sphere_intersection(self, sphere, 0.0, 10_000.0) {
+
+                closest_hit = match closest_hit {
+                    None => Some(hit),
+                    Some(c) => Some(if c.dist < hit.dist { c } else { hit })
                 };
             }
-            return vec3(1.0, 0.0, 0.0);
         }
 
-        if let Some(_hit2) = sphere2_hit {
-            return vec3(0.0, 1.0, 0.0);
+        match closest_hit {
+            Some(hit) => hit.mat.albedo,
+            None => vec3(0.0, 0.0, 0.0)
         }
-
-        vec3(1.0, 0.0, 1.0)
     }
 }
 
 
 struct RayIterator {
-    i : usize,
+    x : usize,
+    y : usize,
+    sample : usize,
 
     samples_per_pixel : usize,
     total_samples : usize,
@@ -129,7 +135,9 @@ impl RayIterator {
         let sensor = cam.sensor;
 
         Self {
-            i: 0, 
+            x: 0,
+            y: 0,
+            sample: 0,
             samples_per_pixel, 
             total_samples,
             sensor_bottom_left,
@@ -146,18 +154,25 @@ impl Iterator for RayIterator {
     type Item = (IVec2, Ray);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let i = self.i;
-        self.i += 1;
+        let x = self.x;
+        let y = self.y;
 
-        if i >= self.total_samples {
-            return None
+        self.sample += 1;
+        if self.sample >= self.samples_per_pixel {
+            self.sample = 0;
+            self.x += 1;
+            if self.x >= WINDOW_WIDTH {
+                self.x = 0;
+                self.y += 1;
+                if self.y >= WINDOW_HEIGHT {
+                    return None;
+                }
+            }
         }
 
-        let pixel_index = i / self.samples_per_pixel;
-        let pixel = ivec2((pixel_index % WINDOW_WIDTH) as i32, (pixel_index / WINDOW_WIDTH) as i32); 
 
         // How far to move along the sensor from the bottom left, (0, 0) = bottom left, (1, 1) = top right
-        let advance = vec2(pixel.x as f64 / WINDOW_WIDTH as f64, pixel.y as f64 / WINDOW_HEIGHT as f64);
+        let advance = vec2(x as f64 / WINDOW_WIDTH as f64, y as f64 / WINDOW_HEIGHT as f64);
         
         // Finally, the actual point on the sensor we are looking for!
         let ray_origin = self.sensor_bottom_left + self.sensor_x_axis * advance.x * self.sensor.x + self.sensor_y_axis * advance.y * self.sensor.y;
@@ -166,7 +181,7 @@ impl Iterator for RayIterator {
         // Maybe adding randomness here to simulate an imperfect lens would be fun?
         let ray_dir = normalize(self.focal_point - ray_origin);
 
-        Some((pixel, Ray::new(ray_origin, ray_dir)))
+        Some((ivec2(x as i32, y as i32), Ray::new(ray_origin, ray_dir)))
     }
 }
 
@@ -230,7 +245,7 @@ fn ray_sphere_intersection(ray: &Ray, sphere: &Sphere, t_min : f64, t_max : f64)
     let dist = root;
     let point = ray.origin + ray.dir * dist;
     let norm = (point - sphere.center) / sphere.radius;
-    return Some(HitRecord{dist, norm, point});
+    return Some(HitRecord{dist, norm, point, mat: sphere.mat});
     
 }
 
